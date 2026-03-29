@@ -48,7 +48,24 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
+## PriceTracker AI
+
+A full-stack product price comparison app powered by the TinyFish Web Agent API. The AI agent autonomously browses Amazon, Flipkart, Walmart, and BestBuy to extract and compare prices.
+
+### Key Features
+- Search any product (e.g., "iPhone 15", "PlayStation 5")
+- AI agent visits 4 e-commerce sites and extracts real prices
+- Best deal highlight shown prominently
+- Async job polling — POST /api/track starts the job, GET /api/track/status/:jobId polls progress
+
+### Environment Variables
+- `TINYFISH_API_KEY` — Required for the AI browsing agent
+
 ## Packages
+
+### `artifacts/price-tracker` (`@workspace/price-tracker`)
+
+React + Vite frontend at `/`. Displays the search UI, tracking progress, and price comparison results table.
 
 ### `artifacts/api-server` (`@workspace/api-server`)
 

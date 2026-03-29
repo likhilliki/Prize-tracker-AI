@@ -1,0 +1,14 @@
+packages:
+  "framer-motion": "For smooth page transitions, loading states, and premium micro-interactions"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility for merging tailwind classes without style conflicts"
+
+images:
+  - path: "artifacts/price-tracker/public/images/abstract-bg.png"
+    description: "A very subtle, abstract tech-forward gradient mesh background in pale indigo, violet, and slate colors. Extremely clean, minimal, bright, mostly white/light gray with soft blurred color blobs. High key lighting."
+    aspect_ratio: "16:9"
+
+notes:
+  - Using Framer Motion for high-end UI feel
+  - Polling implementation uses React Query refetchInterval
+  - Assumes API client is available at @workspace/api-client-react

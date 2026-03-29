@@ -1,15 +1,16 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: PriceTracker AI API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: prices
+    description: Price tracking operations
 paths:
   /healthz:
     get:
@@ -24,6 +25,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /track:
+    post:
+      operationId: trackPrices
+      tags: [prices]
+      summary: Track product prices
+      description: Uses AI agent to search for a product across multiple e-commerce sites and compare prices
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackRequest"
+      responses:
+        "200":
+          description: Price comparison results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /track/status/{jobId}:
+    get:
+      operationId: getTrackStatus
+      tags: [prices]
+      summary: Get tracking job status
+      description: Poll the status of a price tracking job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +90,77 @@ components:
           type: string
       required:
         - status
-
+    TrackRequest:
+      type: object
+      properties:
+        product:
+          type: string
+          description: The product name to search for
+          example: iPhone 15
+      required:
+        - product
+    PriceResult:
+      type: object
+      properties:
+        site:
+          type: string
+          description: The e-commerce site name
+        title:
+          type: string
+          description: The product title found
+        price:
+          type: string
+          description: The price as a string (e.g. "$799.99")
+        link:
+          type: string
+          description: URL to the product page
+        error:
+          type: string
+          description: Error message if extraction failed
+      required:
+        - site
+    TrackResponse:
+      type: object
+      properties:
+        product:
+          type: string
+          description: The searched product name
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PriceResult"
+        bestDeal:
+          $ref: "#/components/schemas/PriceResult"
+        jobId:
+          type: string
+          description: Job ID for status polling
+      required:
+        - product
+        - results
+    JobStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, done, error]
+        product:
+          type: string
+        progress:
+          type: string
+          description: Human-readable progress message
+        result:
+          $ref: "#/components/schemas/TrackResponse"
+        error:
+          type: string
+      required:
+        - jobId
+        - status
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
