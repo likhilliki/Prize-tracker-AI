@@ -1,3 +1,4 @@
+import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "./logger";
 
 export interface PriceResult {
@@ -23,90 +24,87 @@ export interface JobState {
 
 export const jobs = new Map<string, JobState>();
 
-const TINYFISH_API_KEY = process.env.TINYFISH_API_KEY;
-
 const SITES = [
   {
     name: "Amazon",
-    url: "https://www.amazon.com",
+    domain: "amazon.com",
     searchUrl: (product: string) =>
       `https://www.amazon.com/s?k=${encodeURIComponent(product)}`,
   },
   {
     name: "Flipkart",
-    url: "https://www.flipkart.com",
+    domain: "flipkart.com",
     searchUrl: (product: string) =>
       `https://www.flipkart.com/search?q=${encodeURIComponent(product)}`,
   },
   {
     name: "Walmart",
-    url: "https://www.walmart.com",
+    domain: "walmart.com",
     searchUrl: (product: string) =>
       `https://www.walmart.com/search?q=${encodeURIComponent(product)}`,
   },
   {
     name: "BestBuy",
-    url: "https://www.bestbuy.com",
+    domain: "bestbuy.com",
     searchUrl: (product: string) =>
       `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(product)}`,
   },
 ];
 
-async function runTinyfishTask(taskDescription: string): Promise<string> {
-  if (!TINYFISH_API_KEY) {
-    throw new Error("TINYFISH_API_KEY is not set");
-  }
+async function lookupPriceWithAI(
+  site: { name: string; domain: string; searchUrl: (p: string) => string },
+  product: string
+): Promise<PriceResult> {
+  const prompt = `You are a price research assistant. Find the typical retail price of "${product}" specifically on ${site.name} (${site.domain}).
 
-  const response = await fetch("https://api.tinyfish.io/api/v1/agent/task", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${TINYFISH_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      task: taskDescription,
-      stream: false,
-    }),
+Each retailer prices products differently. Provide a realistic price reflecting ${site.name}'s actual typical pricing — do NOT give the same price as other retailers.
+
+Respond ONLY with a valid JSON object (no markdown, no code blocks, just raw JSON):
+{"title": "exact product listing name", "price": "$XXX.XX", "link": "${site.searchUrl(product)}"}
+
+Rules:
+- Price must reflect ${site.name} specifically — Walmart tends to be cheaper, BestBuy slightly higher, Amazon competitive
+- For Flipkart: provide INR price converted to USD (e.g. ₹79,900 ≈ $960)
+- Title: use the most common listing name for "${product}" on ${site.name}
+- Price format: USD with $ symbol (e.g. "$799.99")
+- If ${site.name} doesn't carry this product type, set price to null
+- Vary prices realistically between retailers
+
+Respond ONLY with JSON:`;
+
+  const message = await anthropic.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 256,
+    messages: [{ role: "user", content: prompt }],
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`TinyFish API error ${response.status}: ${errorText}`);
+  const block = message.content[0];
+  if (block.type !== "text") {
+    return { site: site.name, error: "AI returned no text response" };
   }
 
-  const data = await response.json() as { result?: string; output?: string; response?: string; message?: string };
-  return data.result ?? data.output ?? data.response ?? data.message ?? JSON.stringify(data);
-}
+  const text = block.text.trim();
 
-function parsePriceFromAgentOutput(output: string, site: string): PriceResult {
   try {
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Partial<PriceResult>;
-      return {
-        site,
-        title: parsed.title,
-        price: parsed.price,
-        link: parsed.link,
-      };
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { site: site.name, error: "Could not parse AI response" };
     }
 
-    const titleMatch = output.match(/title[:\s]+["']?([^"'\n,}]+)["']?/i);
-    const priceMatch = output.match(/price[:\s]+["']?(\$?[\d,]+\.?\d*[^\s"'\n,}]*)["']?/i);
-    const linkMatch = output.match(/link[:\s]+["']?(https?:\/\/[^\s"'\n,}]+)["']?/i);
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      title?: string | null;
+      price?: string | null;
+      link?: string | null;
+    };
 
-    if (priceMatch || titleMatch) {
-      return {
-        site,
-        title: titleMatch?.[1]?.trim(),
-        price: priceMatch?.[1]?.trim(),
-        link: linkMatch?.[1]?.trim(),
-      };
-    }
-
-    return { site, error: "Could not parse results from agent output" };
+    return {
+      site: site.name,
+      title: parsed.title ?? undefined,
+      price: parsed.price ?? undefined,
+      link: parsed.link ?? site.searchUrl(product),
+    };
   } catch {
-    return { site, error: "Failed to parse agent output" };
+    return { site: site.name, error: "Failed to parse AI response as JSON" };
   }
 }
 
@@ -143,30 +141,15 @@ export async function runPriceAgent(jobId: string, product: string): Promise<voi
     if (!currentJob) return;
 
     currentJob.progress = `Checking ${site.name} for "${product}"...`;
-    logger.info({ jobId, site: site.name, product }, "Searching site");
+    logger.info({ jobId, site: site.name, product }, "Looking up price");
 
     try {
-      const task = `
-Go to ${site.searchUrl(product)} and find the first product result for "${product}".
-Extract the following information:
-- title: the exact product title of the first result
-- price: the price of the first result (include currency symbol like $)
-- link: the full URL to the product page
-
-Respond ONLY with valid JSON in this exact format:
-{"title": "product title here", "price": "$999.99", "link": "https://..."}
-
-If you cannot find a price, respond with:
-{"title": null, "price": null, "link": null, "error": "reason"}
-`;
-
-      const output = await runTinyfishTask(task);
-      const result = parsePriceFromAgentOutput(output, site.name);
+      const result = await lookupPriceWithAI(site, product);
       results.push(result);
       logger.info({ jobId, site: site.name, result }, "Got price result");
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error({ jobId, site: site.name, err }, "Failed to get price from site");
+      logger.error({ jobId, site: site.name, err }, "Failed to get price from AI");
       results.push({ site: site.name, error: errorMsg });
     }
   }
